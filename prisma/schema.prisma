@@ -1,0 +1,89 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// 鉄道事業者テーブル
+model Operator {
+  id        Int      @id
+  name      String   // 事業者名
+  nameKana  String?  // 事業者名（かな）
+  lines     Line[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("operators")
+}
+
+// 路線情報テーブル
+model Line {
+  id          Int      @id
+  operatorId  Int
+  operator    Operator @relation(fields: [operatorId], references: [id])
+  name        String   // 路線名
+  nameKana    String?  // 路線名（かな）
+  color       String?  // 路線カラーコード
+  stations    StationLine[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("lines")
+}
+
+// 駅情報テーブル
+model Station {
+  id          Int      @id
+  name        String   // 駅名
+  nameKana    String?  // 駅名（かな）
+  prefCd      Int      // 都道府県コード
+  lat         Float    // 緯度
+  lng         Float    // 経度
+  lines       StationLine[]
+  visitLogs   VisitLog[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("stations")
+}
+
+// 駅と路線の紐付けテーブル（中間テーブル）
+model StationLine {
+  stationId    Int
+  lineId       Int
+  stationOrder Int      // 路線内での駅順
+
+  station      Station  @relation(fields: [stationId], references: [id])
+  line         Line     @relation(fields: [lineId], references: [id])
+
+  @@id([stationId, lineId])
+  @@map("station_lines")
+}
+
+// 訪問記録イベントの種類
+enum EventType {
+  ALIGHT // 下車
+  BOARD  // 乗車
+  PASS   // 通過
+}
+
+// ユーザーの訪問記録テーブル
+model VisitLog {
+  id          String   @id @default(uuid())
+  userId      String   // Supabase AuthのUser ID
+  stationId   Int
+  station     Station  @relation(fields: [stationId], references: [id])
+  eventType   EventType
+  visitedAt   DateTime @default(now())
+  memo        String?  // メモ
+  tripTitle   String?  // 旅行タイトル
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId, stationId])
+  @@map("visit_logs")
+}
