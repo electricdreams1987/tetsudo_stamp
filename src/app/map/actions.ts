@@ -235,11 +235,11 @@ export async function getLineGeometries() {
 }
 
 export async function searchStations(query: string) {
-  if (!query || query.length < 2) return []
+  if (!query || query.trim().length < 1) return []
   
   return await prisma.station.findMany({
     where: {
-      name: { contains: query }
+      name: { contains: query.trim() }
     },
     select: {
       id: true,
@@ -256,6 +256,14 @@ export async function searchStations(query: string) {
     take: 10
   })
 }
+
+const routeStationSelect = {
+  id: true,
+  name: true,
+  prefCd: true,
+  lat: true,
+  lng: true,
+} as const
 
 export async function findRoute(startId: number, endId: number) {
   // まず同一路線を探す
@@ -283,7 +291,7 @@ export async function findRoute(startId: number, endId: number) {
         stationOrder: { gte: minOrder, lte: maxOrder }
       },
       orderBy: { stationOrder: startOrder < endOrder ? 'asc' : 'desc' },
-      include: { station: true }
+      include: { station: { select: routeStationSelect } }
     })
 
     results.push({
@@ -337,7 +345,7 @@ export async function findRoute(startId: number, endId: number) {
           const line2 = await prisma.line.findUnique({ where: { id: leg2.lineId } })
           const transferSL = await prisma.stationLine.findFirst({
             where: { stationId: transferId, lineId: leg1.lineId },
-            include: { station: true }
+            include: { station: { select: routeStationSelect } }
           })
 
           const startOrder = leg1.stationOrder
@@ -361,13 +369,13 @@ export async function findRoute(startId: number, endId: number) {
           const leg1Stations = await prisma.stationLine.findMany({
             where: { lineId: leg1.lineId, stationOrder: { gte: min1, lte: max1 } },
             orderBy: { stationOrder: startOrder < transferOrder1 ? 'asc' : 'desc' },
-            include: { station: true }
+            include: { station: { select: routeStationSelect } }
           })
 
           const leg2Stations = await prisma.stationLine.findMany({
             where: { lineId: leg2.lineId, stationOrder: { gte: min2, lte: max2 } },
             orderBy: { stationOrder: transferOrder2 < endOrder ? 'asc' : 'desc' },
-            include: { station: true }
+            include: { station: { select: routeStationSelect } }
           })
 
           // 乗り換え駅を重複させない

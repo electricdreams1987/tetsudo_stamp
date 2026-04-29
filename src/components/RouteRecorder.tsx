@@ -40,7 +40,7 @@ export default function RouteRecorder({ onClose, onComplete }: { onClose: () => 
 
   useEffect(() => {
     const timer = setTimeout(async () => {
-      if (startQuery.length >= 2) {
+      if (startQuery.trim().length >= 1) {
         const res = await searchStations(startQuery)
         setStartResults(res as StationResult[])
       } else {
@@ -52,7 +52,7 @@ export default function RouteRecorder({ onClose, onComplete }: { onClose: () => 
 
   useEffect(() => {
     const timer = setTimeout(async () => {
-      if (endQuery.length >= 2) {
+      if (endQuery.trim().length >= 1) {
         const res = await searchStations(endQuery)
         setEndResults(res as StationResult[])
       } else {
