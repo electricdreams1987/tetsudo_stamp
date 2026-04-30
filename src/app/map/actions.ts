@@ -72,12 +72,23 @@ export async function saveVisitLog(formData: FormData) {
   }
 
   const stationId = parseInt(formData.get('stationId') as string)
-  const eventType = formData.get('status') as 'ALIGHT' | 'BOARD' | 'PASS'
+  const eventType = formData.get('status') as 'ALIGHT' | 'BOARD' | 'PASS' | 'UNVISITED'
   const visitedAtStr = formData.get('visitedAt') as string
   const memo = formData.get('memo') as string
 
   if (!stationId || !eventType) {
     throw new Error('必須項目が入力されていません')
+  }
+
+  if (eventType === 'UNVISITED') {
+    await prisma.visitLog.deleteMany({
+      where: {
+        userId: user.id,
+        stationId,
+      }
+    })
+
+    return { success: true }
   }
 
   const visitedAt = visitedAtStr ? new Date(visitedAtStr) : new Date()
@@ -116,7 +127,18 @@ export async function getLines() {
 }
 
 export async function getOperatorsWithLines() {
-  return await prisma.operator.findMany({
+  const regions = [
+    { id: 'hokkaido', name: '北海道', prefs: [1] },
+    { id: 'tohoku', name: '東北', prefs: [2, 3, 4, 5, 6, 7] },
+    { id: 'kanto', name: '関東', prefs: [8, 9, 10, 11, 12, 13, 14] },
+    { id: 'chubu', name: '中部', prefs: [15, 16, 17, 18, 19, 20, 21, 22, 23] },
+    { id: 'kinki', name: '近畿', prefs: [24, 25, 26, 27, 28, 29, 30] },
+    { id: 'chugoku', name: '中国', prefs: [31, 32, 33, 34, 35] },
+    { id: 'shikoku', name: '四国', prefs: [36, 37, 38, 39] },
+    { id: 'kyushu', name: '九州・沖縄', prefs: [40, 41, 42, 43, 44, 45, 46, 47] },
+  ]
+
+  const operators = await prisma.operator.findMany({
     select: {
       id: true,
       name: true,
@@ -127,6 +149,13 @@ export async function getOperatorsWithLines() {
           color: true,
           _count: {
             select: { stations: true }
+          },
+          stations: {
+            select: {
+              station: {
+                select: { prefCd: true }
+              }
+            }
           }
         },
         orderBy: { name: 'asc' }
@@ -134,6 +163,23 @@ export async function getOperatorsWithLines() {
     },
     orderBy: { name: 'asc' }
   })
+
+  return regions.map(region => ({
+    ...region,
+    operators: operators
+      .map(operator => ({
+        ...operator,
+        lines: operator.lines
+          .filter(line => line.stations.some(sl => region.prefs.includes(sl.station.prefCd)))
+          .map(line => ({
+            id: line.id,
+            name: line.name,
+            color: line.color,
+            _count: line._count
+          }))
+      }))
+      .filter(operator => operator.lines.length > 0)
+  })).filter(region => region.operators.length > 0)
 }
 
 export async function getLineStationsForRecording(lineId: number) {
@@ -192,9 +238,9 @@ export async function getLineStationsForRecording(lineId: number) {
     ...line,
     stations: line.stations.map(sl => {
       const logs = sl.station.visitLogs
-      let currentStatus: 'ALIGHT' | 'BOARD' | 'PASS' | null = null
-      if (logs.some(log => log.eventType === 'ALIGHT')) currentStatus = 'ALIGHT'
-      else if (logs.some(log => log.eventType === 'BOARD')) currentStatus = 'BOARD'
+      let currentStatus: 'VISITED' | 'PASS' | 'UNVISITED' = 'UNVISITED'
+      if (logs.some(log => log.eventType === 'ALIGHT')) currentStatus = 'VISITED'
+      else if (logs.some(log => log.eventType === 'BOARD')) currentStatus = 'VISITED'
       else if (logs.some(log => log.eventType === 'PASS')) currentStatus = 'PASS'
 
       const latestLog = logs[0]
@@ -222,7 +268,7 @@ export async function getLineStationsForRecording(lineId: number) {
 
 export async function saveLineVisitLogs(entries: {
   stationId: number
-  eventType: 'BOARD' | 'PASS' | 'ALIGHT'
+  eventType: 'VISITED' | 'PASS' | 'UNVISITED'
   visitedAt?: string
   memo?: string
   tripTitle?: string
@@ -235,23 +281,40 @@ export async function saveLineVisitLogs(entries: {
   }
 
   const validEntries = entries.filter(entry =>
-    entry.stationId && ['BOARD', 'PASS', 'ALIGHT'].includes(entry.eventType)
+    entry.stationId && ['VISITED', 'PASS', 'UNVISITED'].includes(entry.eventType)
   )
 
   if (validEntries.length === 0) {
     throw new Error('保存する記録がありません')
   }
 
-  await prisma.visitLog.createMany({
-    data: validEntries.map(entry => ({
+  const unvisitedStationIds = validEntries
+    .filter(entry => entry.eventType === 'UNVISITED')
+    .map(entry => entry.stationId)
+
+  if (unvisitedStationIds.length > 0) {
+    await prisma.visitLog.deleteMany({
+      where: {
+        userId: user.id,
+        stationId: { in: unvisitedStationIds }
+      }
+    })
+  }
+
+  const logsToCreate = validEntries.filter(entry => entry.eventType !== 'UNVISITED')
+
+  if (logsToCreate.length > 0) {
+    await prisma.visitLog.createMany({
+      data: logsToCreate.map(entry => ({
       userId: user.id,
       stationId: entry.stationId,
-      eventType: entry.eventType,
+      eventType: entry.eventType === 'VISITED' ? 'ALIGHT' : 'PASS',
       visitedAt: entry.visitedAt ? new Date(entry.visitedAt) : new Date(),
       memo: entry.memo?.trim() || null,
       tripTitle: entry.tripTitle?.trim() || null,
-    }))
-  })
+      }))
+    })
+  }
 
   return { success: true, count: validEntries.length }
 }

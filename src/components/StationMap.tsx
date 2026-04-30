@@ -390,7 +390,7 @@ export default function StationMap() {
             >
               <div className="space-y-2">
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">記録タイプ</label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   <label className="relative">
                     <input type="radio" name="status" value="ALIGHT" defaultChecked={selectedStation.status === 'ALIGHT' || selectedStation.status === 'BOARD'} className="sr-only peer" />
                     <div className="text-xs font-bold py-2 border-2 border-slate-100 rounded-xl text-slate-500 text-center cursor-pointer transition-all hover:border-slate-200 peer-checked:bg-[#e11d48] peer-checked:text-white peer-checked:border-[#e11d48]">
@@ -401,6 +401,12 @@ export default function StationMap() {
                     <input type="radio" name="status" value="PASS" defaultChecked={selectedStation.status === 'PASS'} className="sr-only peer" />
                     <div className="text-xs font-bold py-2 border-2 border-slate-100 rounded-xl text-slate-500 text-center cursor-pointer transition-all hover:border-slate-200 peer-checked:bg-[#fbbf24] peer-checked:text-white peer-checked:border-[#fbbf24]">
                       通過
+                    </div>
+                  </label>
+                  <label className="relative">
+                    <input type="radio" name="status" value="UNVISITED" defaultChecked={selectedStation.status === 'UNVISITED'} className="sr-only peer" />
+                    <div className="text-xs font-bold py-2 border-2 border-slate-100 rounded-xl text-slate-500 text-center cursor-pointer transition-all hover:border-slate-200 peer-checked:bg-slate-500 peer-checked:text-white peer-checked:border-slate-500">
+                      未訪問
                     </div>
                   </label>
                 </div>
