@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { X, Calendar, Filter, Route, ChevronDown, Clock } from 'lucide-react'
 import { getStations, saveVisitLog, getLineColors, getLines, getStationVisitHistory } from '@/app/map/actions'
 import RouteRecorder from './RouteRecorder'
+import LineBulkRecorder from './LineBulkRecorder'
 
 type StationStatus = 'ALIGHT' | 'BOARD' | 'PASS' | 'UNVISITED'
 
@@ -68,6 +69,7 @@ export default function StationMap() {
   const [isSaving, setIsSaving] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [showRouteRecorder, setShowRouteRecorder] = useState(false)
+  const [showLineBulkRecorder, setShowLineBulkRecorder] = useState(false)
   const [showFilters, setShowFilters] = useState(false)
 
   const loadStations = async () => {
@@ -302,10 +304,17 @@ export default function StationMap() {
         {/* 区切り線と一括記録ボタン */}
         <div className="px-4 pb-4 pt-2 border-t border-slate-100 space-y-3">
           <Button
-            onClick={() => setShowRouteRecorder(true)}
+            onClick={() => setShowLineBulkRecorder(true)}
             className="w-full bg-slate-900 text-white rounded-xl py-4 h-auto flex items-center justify-center gap-2 text-sm"
           >
-            <Route className="w-4 h-4" /> 一括ルート記録
+            <Route className="w-4 h-4" /> 路線別まとめて記録
+          </Button>
+
+          <Button
+            onClick={() => setShowRouteRecorder(true)}
+            className="w-full bg-white text-slate-700 border border-slate-200 rounded-xl py-3 h-auto flex items-center justify-center gap-2 text-xs font-black hover:bg-slate-50"
+          >
+            <Route className="w-3.5 h-3.5" /> ルート一括記録
           </Button>
 
           {/* 凡例 */}
@@ -326,6 +335,11 @@ export default function StationMap() {
       {/* ルート記録モーダル */}
       {showRouteRecorder && (
         <RouteRecorder onClose={() => setShowRouteRecorder(false)} onComplete={loadStations} />
+      )}
+
+      {/* 路線別一括記録モーダル */}
+      {showLineBulkRecorder && (
+        <LineBulkRecorder onClose={() => setShowLineBulkRecorder(false)} onComplete={loadStations} />
       )}
 
       {/* 駅詳細パネル */}

@@ -115,6 +115,147 @@ export async function getLines() {
   })
 }
 
+export async function getOperatorsWithLines() {
+  return await prisma.operator.findMany({
+    select: {
+      id: true,
+      name: true,
+      lines: {
+        select: {
+          id: true,
+          name: true,
+          color: true,
+          _count: {
+            select: { stations: true }
+          }
+        },
+        orderBy: { name: 'asc' }
+      }
+    },
+    orderBy: { name: 'asc' }
+  })
+}
+
+export async function getLineStationsForRecording(lineId: number) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+
+  if (!user) {
+    throw new Error('認証されていません')
+  }
+
+  const line = await prisma.line.findUnique({
+    where: { id: lineId },
+    select: {
+      id: true,
+      name: true,
+      color: true,
+      operator: {
+        select: {
+          id: true,
+          name: true
+        }
+      },
+      stations: {
+        orderBy: { stationOrder: 'asc' },
+        select: {
+          stationOrder: true,
+          station: {
+            select: {
+              id: true,
+              name: true,
+              nameKana: true,
+              prefCd: true,
+              visitLogs: {
+                where: { userId: user.id },
+                orderBy: { visitedAt: 'desc' },
+                select: {
+                  id: true,
+                  eventType: true,
+                  visitedAt: true,
+                  memo: true,
+                  tripTitle: true
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  })
+
+  if (!line) {
+    throw new Error('路線が見つかりませんでした')
+  }
+
+  return {
+    ...line,
+    stations: line.stations.map(sl => {
+      const logs = sl.station.visitLogs
+      let currentStatus: 'ALIGHT' | 'BOARD' | 'PASS' | null = null
+      if (logs.some(log => log.eventType === 'ALIGHT')) currentStatus = 'ALIGHT'
+      else if (logs.some(log => log.eventType === 'BOARD')) currentStatus = 'BOARD'
+      else if (logs.some(log => log.eventType === 'PASS')) currentStatus = 'PASS'
+
+      const latestLog = logs[0]
+
+      return {
+        stationOrder: sl.stationOrder,
+        station: {
+          id: sl.station.id,
+          name: sl.station.name,
+          nameKana: sl.station.nameKana,
+          prefCd: sl.station.prefCd,
+          currentStatus,
+          latestLog: latestLog ? {
+            id: latestLog.id,
+            eventType: latestLog.eventType,
+            visitedAt: latestLog.visitedAt.toISOString(),
+            memo: latestLog.memo,
+            tripTitle: latestLog.tripTitle
+          } : null
+        }
+      }
+    })
+  }
+}
+
+export async function saveLineVisitLogs(entries: {
+  stationId: number
+  eventType: 'BOARD' | 'PASS' | 'ALIGHT'
+  visitedAt?: string
+  memo?: string
+  tripTitle?: string
+}[]) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+
+  if (!user) {
+    throw new Error('認証されていません')
+  }
+
+  const validEntries = entries.filter(entry =>
+    entry.stationId && ['BOARD', 'PASS', 'ALIGHT'].includes(entry.eventType)
+  )
+
+  if (validEntries.length === 0) {
+    throw new Error('保存する記録がありません')
+  }
+
+  await prisma.visitLog.createMany({
+    data: validEntries.map(entry => ({
+      userId: user.id,
+      stationId: entry.stationId,
+      eventType: entry.eventType,
+      visitedAt: entry.visitedAt ? new Date(entry.visitedAt) : new Date(),
+      memo: entry.memo?.trim() || null,
+      tripTitle: entry.tripTitle?.trim() || null,
+    }))
+  })
+
+  return { success: true, count: validEntries.length }
+}
+
 export async function getStats(includePass: boolean = true) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -123,7 +264,7 @@ export async function getStats(includePass: boolean = true) {
 
   const totalStations = await prisma.station.count()
   
-  const visitFilter: any = { userId: user.id }
+  const visitFilter: { userId: string; eventType?: { in: ('BOARD' | 'ALIGHT')[] } } = { userId: user.id }
   if (!includePass) {
     visitFilter.eventType = { in: ['BOARD', 'ALIGHT'] }
   }
