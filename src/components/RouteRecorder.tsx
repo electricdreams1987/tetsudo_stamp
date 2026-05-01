@@ -42,7 +42,7 @@ export default function RouteRecorder({ onClose, onComplete }: { onClose: () => 
   const [useDate, setUseDate] = useState(true)
   const [visitedAt, setVisitedAt] = useState(new Date().toISOString().split('T')[0])
   const [error, setError] = useState<string | null>(null)
-  const pending = usePendingVisitChanges('tetsudo:pending:route-recorder', async () => {
+  const pending = usePendingVisitChanges('tetsudo:pending:visit-changes', async () => {
     onComplete()
     onClose()
   })
@@ -121,9 +121,7 @@ export default function RouteRecorder({ onClose, onComplete }: { onClose: () => 
             <Train className="w-6 h-6 text-primary" /> ルート一括記録
           </h2>
           <button
-            onClick={() => {
-              if (pending.confirmIfDirty()) onClose()
-            }}
+            onClick={onClose}
             className="p-2 hover:bg-white/10 rounded-full transition-colors"
           >
             <X className="w-5 h-5" />

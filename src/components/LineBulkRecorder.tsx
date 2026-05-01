@@ -39,7 +39,7 @@ export default function LineBulkRecorder({ onClose, onComplete }: { onClose: () 
   const [isLoadingLine, setIsLoadingLine] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const pending = usePendingVisitChanges('tetsudo:pending:line-bulk-recorder', async () => {
+  const pending = usePendingVisitChanges('tetsudo:pending:visit-changes', async () => {
     onComplete()
     if (selectedLineId) setLineData(await getLineStationsForRecording(selectedLineId))
   })
@@ -140,13 +140,12 @@ export default function LineBulkRecorder({ onClose, onComplete }: { onClose: () 
   }
 
   const openLineList = () => {
-    if (!pending.confirmIfDirty()) return
     setLineData(null)
     setSelectedLineId(null)
   }
 
   const close = () => {
-    if (pending.confirmIfDirty()) onClose()
+    onClose()
   }
 
   return (

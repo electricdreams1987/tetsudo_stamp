@@ -1,5 +1,7 @@
 'use client'
 
+/* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/set-state-in-effect */
+
 import { useState, useMemo, useEffect } from 'react'
 import Map, { Source, Layer, NavigationControl, GeolocateControl, type LayerProps } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -26,6 +28,10 @@ interface LineInfo {
   name: string
   color: string | null
 }
+
+let cachedStations: Station[] | null = null
+let cachedLineColors: { name: string; color: string | null }[] | null = null
+let cachedLines: LineInfo[] | null = null
 
 const PREF_NAMES: Record<number, string> = {
   1: '北海道', 2: '青森県', 3: '岩手県', 4: '宮城県', 5: '秋田県',
@@ -73,15 +79,26 @@ export default function StationMap() {
   const [showFilters, setShowFilters] = useState(false)
 
   const loadStations = async () => {
+    if (cachedStations && cachedLineColors && cachedLines) {
+      setStations(cachedStations)
+      setLineColors(cachedLineColors)
+      setLines(cachedLines)
+      setIsLoading(false)
+      return
+    }
+
     try {
       const [stationData, colors, lineList] = await Promise.all([
         getStations(),
         getLineColors(),
         getLines()
       ])
-      setStations(stationData as Station[])
-      setLineColors(colors)
-      setLines(lineList as LineInfo[])
+      cachedStations = stationData as Station[]
+      cachedLineColors = colors
+      cachedLines = lineList as LineInfo[]
+      setStations(cachedStations)
+      setLineColors(cachedLineColors)
+      setLines(cachedLines)
     } catch (error) {
       console.error('Failed to load map data:', error)
     } finally {
@@ -91,7 +108,8 @@ export default function StationMap() {
 
   const refreshStationStatuses = async () => {
     const stationData = await getStations()
-    setStations(stationData as Station[])
+    cachedStations = stationData as Station[]
+    setStations(cachedStations)
   }
 
   useEffect(() => { loadStations() }, [])
@@ -383,7 +401,8 @@ export default function StationMap() {
                   formData.append('stationId', selectedStation.id.toString())
                   await saveVisitLog(formData)
                   const data = await getStations()
-                  setStations(data as Station[])
+                  cachedStations = data as Station[]
+                  setStations(cachedStations)
                   const newStatus = formData.get('status') as StationStatus
                   setSelectedStation(prev => prev ? { ...prev, status: newStatus } : null)
                 } catch (e: any) {

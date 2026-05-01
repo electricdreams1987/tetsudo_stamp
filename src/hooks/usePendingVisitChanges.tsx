@@ -81,11 +81,6 @@ export function usePendingVisitChanges(storageKey: string, onSaved?: () => Promi
     setPendingChanges({})
   }, [])
 
-  const confirmIfDirty = useCallback(() => {
-    if (changes.length === 0) return true
-    return window.confirm('未保存の変更があります。破棄して移動しますか？')
-  }, [changes.length])
-
   const saveChanges = useCallback(async () => {
     if (changes.length === 0 || isSaving) return
 
@@ -112,7 +107,6 @@ export function usePendingVisitChanges(storageKey: string, onSaved?: () => Promi
     upsertChange,
     upsertChanges,
     clearChanges,
-    confirmIfDirty,
     saveChanges,
   }
 }
