@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { X, Search, Train, ArrowRight, Check, Calendar } from 'lucide-react'
-import { searchStations, findRoute, saveBulkVisitLogs } from '@/app/map/actions'
+import { searchStations, findRoute } from '@/app/map/actions'
+import { PendingChangesBar, type PendingVisitChange, usePendingVisitChanges } from '@/hooks/usePendingVisitChanges'
 
 interface StationResult {
   id: number;
@@ -12,15 +13,20 @@ interface StationResult {
   lines: { line: { name: string } }[];
 }
 
+interface RouteStation {
+  id: number;
+  name: string;
+}
+
 interface RouteCandidate {
   type: 'direct' | 'transfer';
   lineId: number;
   lineName: string;
   lineColor: string;
-  stations: any[];
-  transferStation: any | null;
-  leg1?: { lineName: string; lineColor: string; stations: any[] };
-  leg2?: { lineName: string; lineColor: string; stations: any[] };
+  stations: RouteStation[];
+  transferStation: RouteStation | null;
+  leg1?: { lineName: string; lineColor: string; stations: RouteStation[] };
+  leg2?: { lineName: string; lineColor: string; stations: RouteStation[] };
 }
 
 export default function RouteRecorder({ onClose, onComplete }: { onClose: () => void, onComplete: () => void }) {
@@ -33,10 +39,13 @@ export default function RouteRecorder({ onClose, onComplete }: { onClose: () => 
   const [candidates, setCandidates] = useState<RouteCandidate[]>([])
   const [selectedRoute, setSelectedRoute] = useState<RouteCandidate | null>(null)
   const [isSearching, setIsSearching] = useState(false)
-  const [isSaving, setIsSaving] = useState(false)
   const [useDate, setUseDate] = useState(true)
   const [visitedAt, setVisitedAt] = useState(new Date().toISOString().split('T')[0])
   const [error, setError] = useState<string | null>(null)
+  const pending = usePendingVisitChanges('tetsudo:pending:route-recorder', async () => {
+    onComplete()
+    onClose()
+  })
 
   useEffect(() => {
     const timer = setTimeout(async () => {
@@ -72,31 +81,26 @@ export default function RouteRecorder({ onClose, onComplete }: { onClose: () => 
       const res = await findRoute(startStation.id, endStation.id)
       setCandidates(res as RouteCandidate[])
       if (res.length > 0) setSelectedRoute(res[0] as RouteCandidate)
-    } catch (e: any) {
-      setError(e.message)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'ルート検索に失敗しました')
     } finally {
       setIsSearching(false)
     }
   }
 
-  const handleSave = async () => {
+  const handleAddPending = () => {
     if (!selectedRoute || !startStation || !endStation) return
-    setIsSaving(true)
-    try {
-      const ids = selectedRoute.stations.map(s => s.id)
-      await saveBulkVisitLogs(
-        ids,
-        startStation.id,
-        endStation.id,
-        useDate ? visitedAt : undefined
-      )
-      onComplete()
-      onClose()
-    } catch (e: any) {
-      setError(e.message)
-    } finally {
-      setIsSaving(false)
-    }
+
+    const changes: PendingVisitChange[] = selectedRoute.stations.map(station => ({
+      stationId: station.id,
+      lineId: selectedRoute.lineId,
+      eventType: station.id === startStation.id ? 'BOARD' : station.id === endStation.id ? 'ALIGHT' : 'PASS',
+      visitedAt: useDate ? visitedAt : undefined,
+      sourceType: 'route',
+    }))
+
+    pending.upsertChanges(changes)
+    setError(null)
   }
 
   const LineChip = ({ name, color }: { name: string, color: string }) => (
@@ -116,12 +120,17 @@ export default function RouteRecorder({ onClose, onComplete }: { onClose: () => 
           <h2 className="text-xl font-black flex items-center gap-2">
             <Train className="w-6 h-6 text-primary" /> ルート一括記録
           </h2>
-          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+          <button
+            onClick={() => {
+              if (pending.confirmIfDirty()) onClose()
+            }}
+            className="p-2 hover:bg-white/10 rounded-full transition-colors"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+        <div className="flex-1 overflow-y-auto p-5 pb-28 space-y-5">
           {/* 乗車駅 */}
           <StationSearchField
             label="乗車駅"
@@ -244,16 +253,25 @@ export default function RouteRecorder({ onClose, onComplete }: { onClose: () => 
           )}
         </div>
 
-        {/* 保存ボタン */}
+        {/* 未保存追加ボタン */}
         <div className="p-5 border-t bg-slate-50 shrink-0">
           <Button
-            onClick={handleSave}
-            disabled={!selectedRoute || isSaving}
+            onClick={handleAddPending}
+            disabled={!selectedRoute}
             className="w-full py-7 rounded-2xl bg-slate-900 text-white font-black text-lg shadow-xl hover:bg-black transition-all disabled:opacity-40"
           >
-            {isSaving ? '記録中...' : `このルートで一括保存 (${selectedRoute?.stations.length ?? 0}駅)`}
+            {`このルートを未保存に追加 (${selectedRoute?.stations.length ?? 0}駅)`}
           </Button>
         </div>
+
+        <PendingChangesBar
+          count={pending.pendingCount}
+          isSaving={pending.isSaving}
+          saveStatus={pending.saveStatus}
+          onSave={pending.saveChanges}
+          onDiscard={pending.clearChanges}
+          saveLabel="保存"
+        />
       </div>
     </div>
   )

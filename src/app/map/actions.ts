@@ -266,12 +266,14 @@ export async function getLineStationsForRecording(lineId: number) {
   }
 }
 
-export async function saveLineVisitLogs(entries: {
+export async function savePendingVisitChanges(entries: {
   stationId: number
-  eventType: 'VISITED' | 'PASS' | 'UNVISITED'
+  lineId?: number
+  eventType: 'BOARD' | 'ALIGHT' | 'VISITED' | 'PASS' | 'UNVISITED'
   visitedAt?: string
   memo?: string
   tripTitle?: string
+  sourceType: 'route' | 'line'
 }[]) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -281,40 +283,41 @@ export async function saveLineVisitLogs(entries: {
   }
 
   const validEntries = entries.filter(entry =>
-    entry.stationId && ['VISITED', 'PASS', 'UNVISITED'].includes(entry.eventType)
+    entry.stationId &&
+    ['BOARD', 'ALIGHT', 'VISITED', 'PASS', 'UNVISITED'].includes(entry.eventType)
   )
 
   if (validEntries.length === 0) {
     throw new Error('保存する記録がありません')
   }
 
-  const unvisitedStationIds = validEntries
-    .filter(entry => entry.eventType === 'UNVISITED')
-    .map(entry => entry.stationId)
-
-  if (unvisitedStationIds.length > 0) {
-    await prisma.visitLog.deleteMany({
-      where: {
-        userId: user.id,
-        stationId: { in: unvisitedStationIds }
-      }
-    })
-  }
-
+  const stationIds = [...new Set(validEntries.map(entry => entry.stationId))]
   const logsToCreate = validEntries.filter(entry => entry.eventType !== 'UNVISITED')
 
-  if (logsToCreate.length > 0) {
-    await prisma.visitLog.createMany({
-      data: logsToCreate.map(entry => ({
-      userId: user.id,
-      stationId: entry.stationId,
-      eventType: entry.eventType === 'VISITED' ? 'ALIGHT' : 'PASS',
-      visitedAt: entry.visitedAt ? new Date(entry.visitedAt) : new Date(),
-      memo: entry.memo?.trim() || null,
-      tripTitle: entry.tripTitle?.trim() || null,
-      }))
-    })
-  }
+  await prisma.$transaction([
+    prisma.visitLog.deleteMany({
+      where: {
+        userId: user.id,
+        stationId: { in: stationIds },
+      },
+    }),
+    ...(logsToCreate.length > 0 ? [
+      prisma.visitLog.createMany({
+        data: logsToCreate.map(entry => ({
+          userId: user.id,
+          stationId: entry.stationId,
+          eventType: entry.eventType === 'VISITED'
+            ? 'ALIGHT'
+            : entry.eventType === 'BOARD' || entry.eventType === 'ALIGHT' || entry.eventType === 'PASS'
+              ? entry.eventType
+              : 'PASS',
+          visitedAt: entry.visitedAt ? new Date(entry.visitedAt) : new Date(),
+          memo: entry.memo?.trim() || null,
+          tripTitle: entry.tripTitle?.trim() || null,
+        })),
+      })
+    ] : [])
+  ])
 
   return { success: true, count: validEntries.length }
 }
@@ -608,36 +611,4 @@ export async function findRoute(startId: number, endId: number) {
   }
 
   return results
-}
-
-export async function saveBulkVisitLogs(
-  stationIds: number[],
-  startId: number,
-  endId: number,
-  visitedAt?: string
-) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('認証が必要です')
-
-  const date = visitedAt ? new Date(visitedAt) : new Date()
-
-  const data = stationIds.map(id => {
-    let eventType: 'BOARD' | 'ALIGHT' | 'PASS' = 'PASS'
-    if (id === startId) eventType = 'BOARD'
-    else if (id === endId) eventType = 'ALIGHT'
-    
-    return {
-      userId: user.id,
-      stationId: id,
-      eventType,
-      visitedAt: date
-    }
-  })
-
-  await prisma.visitLog.createMany({
-    data
-  })
-
-  return { success: true }
 }

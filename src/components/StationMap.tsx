@@ -89,6 +89,11 @@ export default function StationMap() {
     }
   }
 
+  const refreshStationStatuses = async () => {
+    const stationData = await getStations()
+    setStations(stationData as Station[])
+  }
+
   useEffect(() => { loadStations() }, [])
 
   // GeoJSON生成（フィルタ適用）
@@ -334,12 +339,12 @@ export default function StationMap() {
 
       {/* ルート記録モーダル */}
       {showRouteRecorder && (
-        <RouteRecorder onClose={() => setShowRouteRecorder(false)} onComplete={loadStations} />
+        <RouteRecorder onClose={() => setShowRouteRecorder(false)} onComplete={refreshStationStatuses} />
       )}
 
       {/* 路線別一括記録モーダル */}
       {showLineBulkRecorder && (
-        <LineBulkRecorder onClose={() => setShowLineBulkRecorder(false)} onComplete={loadStations} />
+        <LineBulkRecorder onClose={() => setShowLineBulkRecorder(false)} onComplete={refreshStationStatuses} />
       )}
 
       {/* 駅詳細パネル */}

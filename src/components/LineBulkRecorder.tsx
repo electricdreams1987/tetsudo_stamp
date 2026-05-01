@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Calendar, Check, ChevronDown, ChevronLeft, Loader2, Pencil, Search, Train, X } from 'lucide-react'
-import { getLineStationsForRecording, getOperatorsWithLines, saveLineVisitLogs } from '@/app/map/actions'
+import { Calendar, ChevronDown, ChevronLeft, Loader2, Pencil, Search, Train, X } from 'lucide-react'
+import { getLineStationsForRecording, getOperatorsWithLines } from '@/app/map/actions'
+import { PendingChangesBar, type PendingVisitChange, usePendingVisitChanges } from '@/hooks/usePendingVisitChanges'
 
 type VisitStatus = 'VISITED' | 'PASS' | 'UNVISITED'
 type RegionOption = Awaited<ReturnType<typeof getOperatorsWithLines>>[number]
@@ -11,9 +12,9 @@ type LineStations = Awaited<ReturnType<typeof getLineStationsForRecording>>
 
 type DraftEntry = {
   eventType?: VisitStatus
-  visitedAt: string
-  memo: string
-  tripTitle: string
+  visitedAt?: string
+  memo?: string
+  tripTitle?: string
 }
 
 const STATUS_OPTIONS: { value: VisitStatus; label: string; color: string }[] = [
@@ -32,13 +33,16 @@ export default function LineBulkRecorder({ onClose, onComplete }: { onClose: () 
   const [expandedOperatorIds, setExpandedOperatorIds] = useState<Set<number>>(new Set())
   const [selectedLineId, setSelectedLineId] = useState<number | null>(null)
   const [lineData, setLineData] = useState<LineStations | null>(null)
-  const [drafts, setDrafts] = useState<Record<number, DraftEntry>>({})
   const [query, setQuery] = useState('')
   const [selectedStationId, setSelectedStationId] = useState<number | null>(null)
   const [isLoadingOptions, setIsLoadingOptions] = useState(true)
   const [isLoadingLine, setIsLoadingLine] = useState(false)
-  const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const pending = usePendingVisitChanges('tetsudo:pending:line-bulk-recorder', async () => {
+    onComplete()
+    if (selectedLineId) setLineData(await getLineStationsForRecording(selectedLineId))
+  })
 
   useEffect(() => {
     let ignore = false
@@ -83,7 +87,6 @@ export default function LineBulkRecorder({ onClose, onComplete }: { onClose: () 
   }, [normalizedQuery, regions, selectedRegionId])
 
   const selectedStation = lineData?.stations.find(row => row.station.id === selectedStationId)?.station ?? null
-  const changedCount = useMemo(() => Object.values(drafts).filter(draft => draft.eventType).length, [drafts])
 
   const lineProgress = useMemo(() => {
     if (!lineData) return null
@@ -95,10 +98,14 @@ export default function LineBulkRecorder({ onClose, onComplete }: { onClose: () 
     }
   }, [lineData])
 
+  const draftKey = (stationId: number) => selectedLineId ? `line:${selectedLineId}:${stationId}` : ''
+
+  const getDraft = (stationId: number) =>
+    pending.pendingChanges[draftKey(stationId)] as DraftEntry | undefined
+
   const loadLine = async (lineId: number) => {
     setSelectedLineId(lineId)
     setLineData(null)
-    setDrafts({})
     setError(null)
     setIsLoadingLine(true)
     try {
@@ -110,73 +117,46 @@ export default function LineBulkRecorder({ onClose, onComplete }: { onClose: () 
     }
   }
 
-  const toggleOperator = (operatorId: number) => {
-    setExpandedOperatorIds(prev => {
-      const next = new Set(prev)
-      if (next.has(operatorId)) next.delete(operatorId)
-      else next.add(operatorId)
-      return next
-    })
-  }
-
   const updateDraft = (stationId: number, patch: Partial<DraftEntry>) => {
-    setDrafts(prev => {
-      const existing = prev[stationId] ?? {
-        visitedAt: today(),
-        memo: '',
-        tripTitle: '',
-      }
+    if (!selectedLineId) return
 
-      return {
-        ...prev,
-        [stationId]: {
-        ...existing,
-        ...patch,
-        }
-      }
-    })
-  }
-
-  const selectStatus = (stationId: number, status: VisitStatus) => {
-    updateDraft(stationId, { eventType: status })
-  }
-
-  const handleSave = async () => {
-    const entries = Object.entries(drafts)
-      .map(([stationId, draft]) => ({ stationId: Number(stationId), ...draft }))
-      .filter(entry => entry.eventType) as (DraftEntry & { stationId: number; eventType: VisitStatus })[]
-
-    if (entries.length === 0 || isSaving) return
-
-    setIsSaving(true)
-    setError(null)
-    try {
-      await saveLineVisitLogs(entries)
-      setDrafts({})
-      onComplete()
-      if (selectedLineId) setLineData(await getLineStationsForRecording(selectedLineId))
-    } catch (e: unknown) {
-      setError(errorMessage(e, '一括保存に失敗しました'))
-    } finally {
-      setIsSaving(false)
+    const existing = getDraft(stationId) ?? {
+      visitedAt: today(),
+      memo: '',
+      tripTitle: '',
     }
+    const next = { ...existing, ...patch }
+    if (!next.eventType) return
+
+    pending.upsertChange({
+      stationId,
+      lineId: selectedLineId,
+      eventType: next.eventType,
+      visitedAt: next.visitedAt,
+      memo: next.memo,
+      tripTitle: next.tripTitle,
+      sourceType: 'line',
+    } satisfies PendingVisitChange)
+  }
+
+  const openLineList = () => {
+    if (!pending.confirmIfDirty()) return
+    setLineData(null)
+    setSelectedLineId(null)
+  }
+
+  const close = () => {
+    if (pending.confirmIfDirty()) onClose()
   }
 
   return (
     <div className="fixed inset-0 z-[100] bg-slate-950/70 backdrop-blur-sm">
-      <div className="h-full w-full bg-slate-50 md:mx-auto md:my-4 md:h-[calc(100vh-2rem)] md:max-w-5xl md:overflow-hidden md:rounded-2xl md:shadow-2xl">
+      <div className="relative h-full w-full bg-slate-50 md:mx-auto md:my-4 md:h-[calc(100vh-2rem)] md:max-w-5xl md:overflow-hidden md:rounded-2xl md:shadow-2xl">
         <div className="flex h-full flex-col">
           <header className="flex h-14 shrink-0 items-center justify-between border-b bg-white px-4">
             <div className="flex min-w-0 items-center gap-3">
               {lineData && (
-                <button
-                  onClick={() => {
-                    setLineData(null)
-                    setSelectedLineId(null)
-                    setDrafts({})
-                  }}
-                  className="rounded-full p-2 text-slate-500 hover:bg-slate-100"
-                >
+                <button onClick={openLineList} className="rounded-full p-2 text-slate-500 hover:bg-slate-100">
                   <ChevronLeft className="h-5 w-5" />
                 </button>
               )}
@@ -190,7 +170,7 @@ export default function LineBulkRecorder({ onClose, onComplete }: { onClose: () 
                 </p>
               </div>
             </div>
-            <button onClick={onClose} className="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+            <button onClick={close} className="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
               <X className="h-5 w-5" />
             </button>
           </header>
@@ -269,7 +249,14 @@ export default function LineBulkRecorder({ onClose, onComplete }: { onClose: () 
                           return (
                             <div key={`${region.id}-${operator.id}`} className="rounded-lg border border-slate-200">
                               <button
-                                onClick={() => toggleOperator(operator.id)}
+                                onClick={() => {
+                                  setExpandedOperatorIds(prev => {
+                                    const next = new Set(prev)
+                                    if (next.has(operator.id)) next.delete(operator.id)
+                                    else next.add(operator.id)
+                                    return next
+                                  })
+                                }}
                                 className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left"
                               >
                                 <div className="min-w-0">
@@ -338,7 +325,8 @@ export default function LineBulkRecorder({ onClose, onComplete }: { onClose: () 
                 <div className="mx-auto max-w-3xl px-3 py-4">
                   {lineData.stations.map((row, index) => {
                     const station = row.station
-                    const activeStatus = drafts[station.id]?.eventType
+                    const draft = getDraft(station.id)
+                    const activeStatus = draft?.eventType
                     const savedStatus = station.currentStatus
 
                     return (
@@ -363,7 +351,7 @@ export default function LineBulkRecorder({ onClose, onComplete }: { onClose: () 
                                     変更: {statusLabel(activeStatus)}
                                   </span>
                                 )}
-                                {drafts[station.id]?.memo && <span className="text-[10px] font-bold text-slate-400">メモあり</span>}
+                                {draft?.memo && <span className="text-[10px] font-bold text-slate-400">メモあり</span>}
                               </div>
                             </button>
 
@@ -374,7 +362,7 @@ export default function LineBulkRecorder({ onClose, onComplete }: { onClose: () 
                                 return (
                                   <button
                                     key={option.value}
-                                    onClick={() => selectStatus(station.id, option.value)}
+                                    onClick={() => updateDraft(station.id, { eventType: option.value })}
                                     className={`h-10 rounded-md border text-xs font-black transition-all ${
                                       selected
                                         ? 'border-transparent text-white shadow-sm'
@@ -397,21 +385,14 @@ export default function LineBulkRecorder({ onClose, onComplete }: { onClose: () 
                 </div>
               )}
 
-              <div className="fixed bottom-0 left-0 right-0 z-[110] border-t bg-white/95 p-3 backdrop-blur md:absolute">
-                <div className="mx-auto flex max-w-3xl items-center gap-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">保存前の変更</p>
-                    <p className="text-sm font-black text-slate-900">{changedCount}駅をまとめて更新</p>
-                  </div>
-                  <Button onClick={handleSave} disabled={changedCount === 0 || isSaving} className="h-12 rounded-lg bg-slate-900 px-5 font-black text-white disabled:opacity-40">
-                    {isSaving ? (
-                      <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> 保存中</span>
-                    ) : (
-                      <span className="flex items-center gap-2"><Check className="h-4 w-4" /> まとめて更新</span>
-                    )}
-                  </Button>
-                </div>
-              </div>
+              <PendingChangesBar
+                count={pending.pendingCount}
+                isSaving={pending.isSaving}
+                saveStatus={pending.saveStatus}
+                onSave={pending.saveChanges}
+                onDiscard={pending.clearChanges}
+                saveLabel="保存"
+              />
             </div>
           )}
         </div>
@@ -434,11 +415,11 @@ export default function LineBulkRecorder({ onClose, onComplete }: { onClose: () 
             <div className="space-y-4">
               <div className="grid grid-cols-3 gap-2">
                 {STATUS_OPTIONS.map(option => {
-                  const selected = drafts[selectedStation.id]?.eventType === option.value
+                  const selected = getDraft(selectedStation.id)?.eventType === option.value
                   return (
                     <button
                       key={option.value}
-                      onClick={() => selectStatus(selectedStation.id, option.value)}
+                      onClick={() => updateDraft(selectedStation.id, { eventType: option.value })}
                       className={`h-11 rounded-lg border text-sm font-black ${selected ? 'border-transparent text-white' : 'border-slate-200 text-slate-600'}`}
                       style={selected ? { backgroundColor: option.color } : undefined}
                     >
@@ -454,10 +435,10 @@ export default function LineBulkRecorder({ onClose, onComplete }: { onClose: () 
                 </span>
                 <input
                   type="date"
-                  value={drafts[selectedStation.id]?.visitedAt ?? selectedStation.latestLog?.visitedAt?.slice(0, 10) ?? today()}
+                  value={getDraft(selectedStation.id)?.visitedAt ?? selectedStation.latestLog?.visitedAt?.slice(0, 10) ?? today()}
                   onChange={e => updateDraft(selectedStation.id, {
                     visitedAt: e.target.value,
-                    eventType: drafts[selectedStation.id]?.eventType ?? selectedStation.currentStatus,
+                    eventType: getDraft(selectedStation.id)?.eventType ?? selectedStation.currentStatus,
                   })}
                   className="h-11 w-full rounded-lg border bg-slate-50 px-3 text-sm font-bold outline-none focus:border-slate-400"
                 />
@@ -466,10 +447,10 @@ export default function LineBulkRecorder({ onClose, onComplete }: { onClose: () 
               <label className="block space-y-1.5">
                 <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">旅タイトル</span>
                 <input
-                  value={drafts[selectedStation.id]?.tripTitle ?? selectedStation.latestLog?.tripTitle ?? ''}
+                  value={getDraft(selectedStation.id)?.tripTitle ?? selectedStation.latestLog?.tripTitle ?? ''}
                   onChange={e => updateDraft(selectedStation.id, {
                     tripTitle: e.target.value,
-                    eventType: drafts[selectedStation.id]?.eventType ?? selectedStation.currentStatus,
+                    eventType: getDraft(selectedStation.id)?.eventType ?? selectedStation.currentStatus,
                   })}
                   placeholder="例: 春の東海道旅"
                   className="h-11 w-full rounded-lg border bg-slate-50 px-3 text-sm font-bold outline-none focus:border-slate-400"
@@ -479,10 +460,10 @@ export default function LineBulkRecorder({ onClose, onComplete }: { onClose: () 
               <label className="block space-y-1.5">
                 <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">メモ</span>
                 <textarea
-                  value={drafts[selectedStation.id]?.memo ?? selectedStation.latestLog?.memo ?? ''}
+                  value={getDraft(selectedStation.id)?.memo ?? selectedStation.latestLog?.memo ?? ''}
                   onChange={e => updateDraft(selectedStation.id, {
                     memo: e.target.value,
-                    eventType: drafts[selectedStation.id]?.eventType ?? selectedStation.currentStatus,
+                    eventType: getDraft(selectedStation.id)?.eventType ?? selectedStation.currentStatus,
                   })}
                   placeholder="駅ごとのメモ"
                   className="h-24 w-full resize-none rounded-lg border bg-slate-50 p-3 text-sm font-medium outline-none focus:border-slate-400"
