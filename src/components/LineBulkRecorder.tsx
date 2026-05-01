@@ -17,6 +17,8 @@ type DraftEntry = {
   tripTitle?: string
 }
 
+let cachedRegions: RegionOption[] | null = null
+
 const STATUS_OPTIONS: { value: VisitStatus; label: string; color: string }[] = [
   { value: 'VISITED', label: '乗車・下車', color: '#e11d48' },
   { value: 'PASS', label: '通過', color: '#f59e0b' },
@@ -27,28 +29,38 @@ const today = () => new Date().toISOString().split('T')[0]
 const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback
 const statusLabel = (status?: VisitStatus | null) => STATUS_OPTIONS.find(option => option.value === status)?.label ?? '未訪問'
 
-export default function LineBulkRecorder({ onClose, onComplete }: { onClose: () => void; onComplete: () => void }) {
-  const [regions, setRegions] = useState<RegionOption[]>([])
-  const [selectedRegionId, setSelectedRegionId] = useState<string | null>(null)
+type SaveCompleteResult = { updates?: { stationId: number; status: 'ALIGHT' | 'BOARD' | 'PASS' | 'UNVISITED' }[] }
+
+export default function LineBulkRecorder({ onClose, onComplete }: { onClose: () => void; onComplete: (result?: SaveCompleteResult) => void }) {
+  const [regions, setRegions] = useState<RegionOption[]>(() => cachedRegions ?? [])
+  const [selectedRegionId, setSelectedRegionId] = useState<string | null>(() => cachedRegions?.[0]?.id ?? null)
   const [expandedOperatorIds, setExpandedOperatorIds] = useState<Set<number>>(new Set())
   const [selectedLineId, setSelectedLineId] = useState<number | null>(null)
   const [lineData, setLineData] = useState<LineStations | null>(null)
   const [query, setQuery] = useState('')
   const [selectedStationId, setSelectedStationId] = useState<number | null>(null)
-  const [isLoadingOptions, setIsLoadingOptions] = useState(true)
+  const [isLoadingOptions, setIsLoadingOptions] = useState(() => !cachedRegions)
   const [isLoadingLine, setIsLoadingLine] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const pending = usePendingVisitChanges('tetsudo:pending:visit-changes', async () => {
-    onComplete()
+  const pending = usePendingVisitChanges('tetsudo:pending:visit-changes', async (result) => {
+    onComplete(result)
     if (selectedLineId) setLineData(await getLineStationsForRecording(selectedLineId))
   })
 
   useEffect(() => {
     let ignore = false
+
+    if (cachedRegions) {
+      return () => {
+        ignore = true
+      }
+    }
+
     getOperatorsWithLines()
       .then(data => {
         if (ignore) return
+        cachedRegions = data
         setRegions(data)
         setSelectedRegionId(data[0]?.id ?? null)
       })

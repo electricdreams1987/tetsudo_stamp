@@ -1,5 +1,6 @@
 import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
+import Link from 'next/link'
 import StationMap from '@/components/StationMap'
 
 export default async function MapPage() {
@@ -20,7 +21,7 @@ export default async function MapPage() {
           <h1 className="text-lg font-bold">全国マップ</h1>
         </div>
         <nav className="flex items-center gap-4">
-          <a href="/dashboard" className="text-sm font-medium hover:underline">ダッシュボード</a>
+          <Link href="/dashboard" className="text-sm font-medium hover:underline">ダッシュボード</Link>
           <form action="/auth/signout" method="post">
             <button className="text-sm font-medium hover:underline text-muted-foreground">ログアウト</button>
           </form>

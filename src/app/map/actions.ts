@@ -3,6 +3,43 @@
 import { prisma } from '@/lib/prisma'
 import { createClient } from '@/utils/supabase/server'
 
+type StationVisitStatus = 'ALIGHT' | 'BOARD' | 'PASS' | 'UNVISITED'
+
+const resolveStationStatus = (logs: { eventType: string }[]): StationVisitStatus => {
+  if (logs.some(v => v.eventType === 'ALIGHT')) return 'ALIGHT'
+  if (logs.some(v => v.eventType === 'BOARD')) return 'BOARD'
+  if (logs.some(v => v.eventType === 'PASS')) return 'PASS'
+  return 'UNVISITED'
+}
+
+async function getStationStatusUpdates(userId: string, stationIds: number[]) {
+  const uniqueStationIds = [...new Set(stationIds)].filter(Boolean)
+  if (uniqueStationIds.length === 0) return []
+
+  const logs = await prisma.visitLog.findMany({
+    where: {
+      userId,
+      stationId: { in: uniqueStationIds },
+    },
+    select: {
+      stationId: true,
+      eventType: true,
+    },
+  })
+
+  const logsByStationId = new Map<number, { eventType: string }[]>()
+  logs.forEach(log => {
+    const stationLogs = logsByStationId.get(log.stationId) ?? []
+    stationLogs.push(log)
+    logsByStationId.set(log.stationId, stationLogs)
+  })
+
+  return uniqueStationIds.map(stationId => ({
+    stationId,
+    status: resolveStationStatus(logsByStationId.get(stationId) ?? []),
+  }))
+}
+
 export async function getStationVisitHistory(stationId: number) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -44,12 +81,7 @@ export async function getStations() {
   })
 
   return stations.map(s => {
-    let status = 'UNVISITED'
-    if (s.visitLogs && s.visitLogs.length > 0) {
-      if (s.visitLogs.some(v => v.eventType === 'ALIGHT')) status = 'ALIGHT'
-      else if (s.visitLogs.some(v => v.eventType === 'BOARD')) status = 'BOARD'
-      else if (s.visitLogs.some(v => v.eventType === 'PASS')) status = 'PASS'
-    }
+    const status = s.visitLogs ? resolveStationStatus(s.visitLogs) : 'UNVISITED'
     
     return {
       id: s.id,
@@ -88,7 +120,7 @@ export async function saveVisitLog(formData: FormData) {
       }
     })
 
-    return { success: true }
+    return { success: true, updates: [{ stationId, status: 'UNVISITED' as const }] }
   }
 
   const visitedAt = visitedAtStr ? new Date(visitedAtStr) : new Date()
@@ -103,7 +135,7 @@ export async function saveVisitLog(formData: FormData) {
     }
   })
 
-  return { success: true }
+  return { success: true, updates: await getStationStatusUpdates(user.id, [stationId]) }
 }
 
 export async function getLineColors() {
@@ -319,7 +351,11 @@ export async function savePendingVisitChanges(entries: {
     ] : [])
   ])
 
-  return { success: true, count: validEntries.length }
+  return {
+    success: true,
+    count: validEntries.length,
+    updates: await getStationStatusUpdates(user.id, stationIds),
+  }
 }
 
 export async function getStats(includePass: boolean = true) {
@@ -485,7 +521,6 @@ export async function findRoute(startId: number, endId: number) {
 
   // 直通ルート
   for (const lineId of commonLineIds) {
-    const line = await prisma.line.findUnique({ where: { id: lineId } })
     const startOrder = startLines.find(sl => sl.lineId === lineId)!.stationOrder
     const endOrder = endLines.find(el => el.lineId === lineId)!.stationOrder
 
@@ -498,8 +533,12 @@ export async function findRoute(startId: number, endId: number) {
         stationOrder: { gte: minOrder, lte: maxOrder }
       },
       orderBy: { stationOrder: startOrder < endOrder ? 'asc' : 'desc' },
-      include: { station: { select: routeStationSelect } }
+      select: {
+        line: { select: { name: true, color: true } },
+        station: { select: routeStationSelect },
+      }
     })
+    const line = stationsOnRoute[0]?.line
 
     results.push({
       type: 'direct' as const,
@@ -548,42 +587,54 @@ export async function findRoute(startId: number, endId: number) {
 
       for (const leg1 of leg1Lines) {
         for (const leg2 of leg2Lines) {
-          const line1 = await prisma.line.findUnique({ where: { id: leg1.lineId } })
-          const line2 = await prisma.line.findUnique({ where: { id: leg2.lineId } })
-          const transferSL = await prisma.stationLine.findFirst({
-            where: { stationId: transferId, lineId: leg1.lineId },
-            include: { station: { select: routeStationSelect } }
-          })
-
           const startOrder = leg1.stationOrder
-          const transferOrder1 = await prisma.stationLine.findFirst({
-            where: { stationId: transferId, lineId: leg1.lineId }
-          }).then(r => r?.stationOrder ?? 0)
+          const [transferSL, transferOrder2SL, endSL] = await Promise.all([
+            prisma.stationLine.findFirst({
+              where: { stationId: transferId, lineId: leg1.lineId },
+              select: {
+                stationOrder: true,
+                station: { select: routeStationSelect },
+              },
+            }),
+            prisma.stationLine.findFirst({
+              where: { stationId: transferId, lineId: leg2.lineId },
+              select: { stationOrder: true },
+            }),
+            prisma.stationLine.findFirst({
+              where: { stationId: endId, lineId: leg2.lineId },
+              select: { stationOrder: true },
+            }),
+          ])
 
-          const transferOrder2 = await prisma.stationLine.findFirst({
-            where: { stationId: transferId, lineId: leg2.lineId }
-          }).then(r => r?.stationOrder ?? 0)
-
-          const endOrder = (await prisma.stationLine.findFirst({
-            where: { stationId: endId, lineId: leg2.lineId }
-          }))?.stationOrder ?? 0
+          const transferOrder1 = transferSL?.stationOrder ?? 0
+          const transferOrder2 = transferOrder2SL?.stationOrder ?? 0
+          const endOrder = endSL?.stationOrder ?? 0
 
           const min1 = Math.min(startOrder, transferOrder1)
           const max1 = Math.max(startOrder, transferOrder1)
           const min2 = Math.min(transferOrder2, endOrder)
           const max2 = Math.max(transferOrder2, endOrder)
 
-          const leg1Stations = await prisma.stationLine.findMany({
-            where: { lineId: leg1.lineId, stationOrder: { gte: min1, lte: max1 } },
-            orderBy: { stationOrder: startOrder < transferOrder1 ? 'asc' : 'desc' },
-            include: { station: { select: routeStationSelect } }
-          })
-
-          const leg2Stations = await prisma.stationLine.findMany({
-            where: { lineId: leg2.lineId, stationOrder: { gte: min2, lte: max2 } },
-            orderBy: { stationOrder: transferOrder2 < endOrder ? 'asc' : 'desc' },
-            include: { station: { select: routeStationSelect } }
-          })
+          const [leg1Stations, leg2Stations] = await Promise.all([
+            prisma.stationLine.findMany({
+              where: { lineId: leg1.lineId, stationOrder: { gte: min1, lte: max1 } },
+              orderBy: { stationOrder: startOrder < transferOrder1 ? 'asc' : 'desc' },
+              select: {
+                line: { select: { name: true, color: true } },
+                station: { select: routeStationSelect },
+              },
+            }),
+            prisma.stationLine.findMany({
+              where: { lineId: leg2.lineId, stationOrder: { gte: min2, lte: max2 } },
+              orderBy: { stationOrder: transferOrder2 < endOrder ? 'asc' : 'desc' },
+              select: {
+                line: { select: { name: true, color: true } },
+                station: { select: routeStationSelect },
+              },
+            }),
+          ])
+          const line1 = leg1Stations[0]?.line
+          const line2 = leg2Stations[0]?.line
 
           // 乗り換え駅を重複させない
           const allStations = [

@@ -18,11 +18,12 @@ export type PendingVisitChange = {
 }
 
 type SaveStatus = 'idle' | 'success' | 'error'
+type SaveResult = Awaited<ReturnType<typeof savePendingVisitChanges>>
 
 const changeKey = (change: Pick<PendingVisitChange, 'stationId' | 'lineId' | 'sourceType'>) =>
   `${change.sourceType}:${change.lineId ?? 'none'}:${change.stationId}`
 
-export function usePendingVisitChanges(storageKey: string, onSaved?: () => Promise<void> | void) {
+export function usePendingVisitChanges(storageKey: string, onSaved?: (result: SaveResult) => Promise<void> | void) {
   const [pendingChanges, setPendingChanges] = useState<Record<string, PendingVisitChange>>(() => {
     if (typeof window === 'undefined') return {}
     try {
@@ -87,10 +88,10 @@ export function usePendingVisitChanges(storageKey: string, onSaved?: () => Promi
     setIsSaving(true)
     setSaveStatus('idle')
     try {
-      await savePendingVisitChanges(changes)
+      const result = await savePendingVisitChanges(changes)
       setPendingChanges({})
       setSaveStatus('success')
-      await onSaved?.()
+      await onSaved?.(result)
     } catch {
       setSaveStatus('error')
     } finally {

@@ -29,6 +29,11 @@ interface LineInfo {
   color: string | null
 }
 
+type StationStatusUpdate = {
+  stationId: number
+  status: StationStatus
+}
+
 let cachedStations: Station[] | null = null
 let cachedLineColors: { name: string; color: string | null }[] | null = null
 let cachedLines: LineInfo[] | null = null
@@ -106,7 +111,28 @@ export default function StationMap() {
     }
   }
 
-  const refreshStationStatuses = async () => {
+  const applyStationStatusUpdates = (updates: StationStatusUpdate[]) => {
+    if (updates.length === 0) return
+    const statusByStationId = new globalThis.Map(updates.map(update => [update.stationId, update.status]))
+    const nextStations = (cachedStations ?? stations).map(station => {
+      const status = statusByStationId.get(station.id)
+      return status ? { ...station, status } : station
+    })
+    cachedStations = nextStations
+    setStations(nextStations)
+    setSelectedStation(prev => {
+      if (!prev) return prev
+      const status = statusByStationId.get(prev.id)
+      return status ? { ...prev, status } : prev
+    })
+  }
+
+  const refreshStationStatuses = async (result?: { updates?: StationStatusUpdate[] }) => {
+    if (result?.updates) {
+      applyStationStatusUpdates(result.updates)
+      return
+    }
+
     const stationData = await getStations()
     cachedStations = stationData as Station[]
     setStations(cachedStations)
@@ -399,12 +425,8 @@ export default function StationMap() {
                 setIsSaving(true)
                 try {
                   formData.append('stationId', selectedStation.id.toString())
-                  await saveVisitLog(formData)
-                  const data = await getStations()
-                  cachedStations = data as Station[]
-                  setStations(cachedStations)
-                  const newStatus = formData.get('status') as StationStatus
-                  setSelectedStation(prev => prev ? { ...prev, status: newStatus } : null)
+                  const result = await saveVisitLog(formData)
+                  applyStationStatusUpdates(result.updates as StationStatusUpdate[])
                 } catch (e: any) {
                   alert(e.message || 'エラーが発生しました')
                 } finally {

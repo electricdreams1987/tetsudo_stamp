@@ -1,5 +1,6 @@
 import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
+import Link from 'next/link'
 import { getStats } from '@/app/map/actions'
 import DashboardClient from '@/components/DashboardClient'
 
@@ -33,7 +34,7 @@ export default async function DashboardPage({
           <h1 className="text-lg font-bold">達成率ダッシュボード</h1>
         </div>
         <nav className="flex items-center gap-4">
-          <a href="/map" className="text-sm font-medium hover:underline">全国マップ</a>
+          <Link href="/map" className="text-sm font-medium hover:underline">全国マップ</Link>
           <form action="/auth/signout" method="post">
             <button className="text-sm font-medium hover:underline text-muted-foreground">ログアウト</button>
           </form>

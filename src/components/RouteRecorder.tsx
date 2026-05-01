@@ -29,7 +29,9 @@ interface RouteCandidate {
   leg2?: { lineName: string; lineColor: string; stations: RouteStation[] };
 }
 
-export default function RouteRecorder({ onClose, onComplete }: { onClose: () => void, onComplete: () => void }) {
+type SaveCompleteResult = { updates?: { stationId: number; status: 'ALIGHT' | 'BOARD' | 'PASS' | 'UNVISITED' }[] }
+
+export default function RouteRecorder({ onClose, onComplete }: { onClose: () => void, onComplete: (result?: SaveCompleteResult) => void }) {
   const [startQuery, setStartQuery] = useState('')
   const [endQuery, setEndQuery] = useState('')
   const [startResults, setStartResults] = useState<StationResult[]>([])
@@ -42,8 +44,8 @@ export default function RouteRecorder({ onClose, onComplete }: { onClose: () => 
   const [useDate, setUseDate] = useState(true)
   const [visitedAt, setVisitedAt] = useState(new Date().toISOString().split('T')[0])
   const [error, setError] = useState<string | null>(null)
-  const pending = usePendingVisitChanges('tetsudo:pending:visit-changes', async () => {
-    onComplete()
+  const pending = usePendingVisitChanges('tetsudo:pending:visit-changes', async (result) => {
+    onComplete(result)
     onClose()
   })
 
