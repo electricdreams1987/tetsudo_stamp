@@ -1,8 +1,22 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
+
+async function getSiteUrl() {
+  const configuredUrl = process.env.NEXT_PUBLIC_SITE_URL
+  if (configuredUrl) return configuredUrl.replace(/\/$/, '')
+
+  const headerStore = await headers()
+  const origin = headerStore.get('origin')
+  if (origin) return origin.replace(/\/$/, '')
+
+  const host = headerStore.get('host')
+  const protocol = host?.includes('localhost') ? 'http' : 'https'
+  return host ? `${protocol}://${host}` : 'https://tetsudo-stamp.vercel.app'
+}
 
 export async function login(formData: FormData) {
   console.log('Login attempt started')
@@ -34,7 +48,14 @@ export async function signup(formData: FormData) {
 
   console.log('Signup Email:', email)
 
-  const { data, error } = await supabase.auth.signUp({ email, password })
+  const siteUrl = await getSiteUrl()
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: {
+      emailRedirectTo: `${siteUrl}/auth/confirm`,
+    },
+  })
 
   if (error) {
     console.error('Signup error:', error.message)
